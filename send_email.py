@@ -1,11 +1,17 @@
 import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
+from email.mime.base import MIMEBase
 import markdown2
 import google.generativeai as genai
 import time
 import re
 import os
+import imaplib
+import email
+from email.header import decode_header
+from email import encoders
+
 # importing necessary functions from dotenv library
 from dotenv import load_dotenv, dotenv_values 
 # loading variables from .env file
@@ -62,6 +68,7 @@ Bcc: [bcc_mail(s)]
 Subject: [Subject of the mail]
 Body: [Body of the mail]
 {os.getenv("signature")} (instead of [Your Name]).
+Attachments: path/to/file1.txt, path/to/file2.jpg, ...
 2- If there are many recipient email addresses, the body of the mail sould start by: "Dear all,..."
 3- If there is any recipient email address provided in the input, just write a placeholder [recipient_mail].
 4- If a correct email address is not provided in the input, do not generate or substitute it with an example address like "name@example.com" or "name@domain.com", just write a placeholder [recipient_mail] instead.
@@ -81,10 +88,12 @@ response = chat_session.send_message(f"{user_input}. \n{complementary_input}")
 ai_response = response.text
 
 #Test part (make the response and ai_response in comments)
-'''ai_response = """
+'''ai_response = f"""
 To: fathallah.youssef@etudiant-fst.utm.tn
-Subject: 
+Subject: Discover the Enchanting Islands of Tunisia
 Body: this is a test mail without subject
+{os.getenv("signature")}
+Attachments: []
 """'''
 
 # Print the AI response (optional)
@@ -92,7 +101,7 @@ print("\n\nAlright, here's my proposal. It will be delivered shortly:\n", flush=
 time.sleep(1.25)
 print(ai_response)
 
-# Functions to extract the recipient mails (recipient, cc, bcc), the subject and the body of the mail
+# Functions to extract the recipient mails (recipient, cc, bcc), the subject, the body and the attachments of the mail
 def extract_recipient_mails(ai_response):
   mail_session = model.start_chat(
     history=[]
@@ -122,15 +131,67 @@ def extract_body(ai_response):
   body_session = model.start_chat(
     history=[]
   )
-  return body_session.send_message(f"Extract only the body from the following mail. Write only the body, nothing else. If there isn't any body or 'No body', write None.\n\n{ai_response}").text
+  return body_session.send_message(f"Extract only the body from the following mail. Write only the body, nothing else. The body starts with 'Dear...' or a similar sentence, and ends with the signature. If there isn't any body or 'No body', write None.\n\n{ai_response}").text
+
+def extract_attachments(ai_response):
+      attachments_session = model.start_chat(
+        history=[]
+      )
+      attachments = attachments_session.send_message(f"Extract only the attachments from the following mail. Write only the attachments separated by commas (','), nothing else. If there isn't any attachments or 'No attachments', write None.\n\n{ai_response}").text.split(',')
+      if "None" in [attachment.strip() for attachment in attachments]:
+          attachments = []
+      return attachments
 
 #Function to determine wether the mail to send is a reply mail or not
 def extract_reply_info(ai_response):
    return bool(re.search('Re:', ai_response))
 
+#Function to determine the ID of the mail to respond (in case it is a reply mail)
+def extract_mail_id(search_subject):
+    try:
+        # Connect to the Gmail IMAP server
+        mail = imaplib.IMAP4_SSL("imap.gmail.com")
+        mail.login(os.getenv("sender_mail"), os.getenv("password"))
+
+        # Select the mailbox you want to use (in this case, the inbox)
+        mail.select("inbox")
+
+        # Ensure the search subject is properly encoded
+        encoded_subject = f'"{search_subject.strip()}"'
+        #print(f"Searching for subject: {encoded_subject}")
+
+        # Search for emails with the specified subject
+        status, messages = mail.search(None, 'SUBJECT', encoded_subject)
+
+        # If no messages found, return None
+        if status != "OK" or not messages[0]:
+            print("No messages found.")
+            return None
+
+        # Get the list of email IDs
+        email_ids = messages[0].split()
+        #print(f"Email IDs found: {email_ids}")
+
+        # Fetch the latest email's headers
+        status, msg_data = mail.fetch(email_ids[-1], "(RFC822)")
+        #print(f"Fetch status: {status}")
+
+        for response_part in msg_data:
+            if isinstance(response_part, tuple):
+                msg = email.message_from_bytes(response_part[1])
+                msg_id = msg["Message-ID"]
+                print(f"Original message-ID: {msg_id}")
+                return msg_id
+
+        # Logout from the server
+        mail.logout()
+    except Exception as e:
+        print(f"An error occurred while determining the original mail Id: {e}")
+        return None
+
 
 # Function to send an email
-def send_email(subject, body, recipient_emails, cc_emails, bcc_emails, reply_info):
+def send_email(subject, body, recipient_emails, cc_emails, bcc_emails, reply_info, attachments=[]):
     # Sender email credentials
     sender_email = os.getenv("sender_mail")
     app_password = os.getenv("password")  # Use the 16-digit App Password
@@ -146,7 +207,7 @@ def send_email(subject, body, recipient_emails, cc_emails, bcc_emails, reply_inf
     #initializing the recipients, cc and bcc mails in case of None
     if "None" in [email.strip() for email in recipient_emails]:
       recipient_emails = [os.getenv("default_recipient_email")]
-      print(f"No recipient email detected, changed it to default value: \n{str(recipient_emails)} \n")
+      print(f"No recipient email detected, changed it to default value: \n{recipient_emails[0].strip()} \n")
     if "None" in [email.strip() for email in cc_emails]:
       cc_emails = []
     if "None" in [email.strip() for email in bcc_emails]:
@@ -154,7 +215,7 @@ def send_email(subject, body, recipient_emails, cc_emails, bcc_emails, reply_inf
     
     #Adding the signature in case there is not
     if os.getenv("signature") not in body:
-      body = body + '\n\n' + os.getenv("signature")
+      body = body + '\n \n' + os.getenv("signature")
     
     #Formatting the body text as markdown
     body = to_markdown(body)
@@ -165,7 +226,7 @@ def send_email(subject, body, recipient_emails, cc_emails, bcc_emails, reply_inf
        # Loop to remove all occurrences of "Re: " at the beginning of the subject
        while subject.strip().lower().startswith("re: "):
             subject = subject.strip()[4:]  # Remove "Re: " from the start
-       subject.strip()
+    subject.strip()
 
     # Compose the email
     message = MIMEMultipart("alternative")
@@ -174,11 +235,27 @@ def send_email(subject, body, recipient_emails, cc_emails, bcc_emails, reply_inf
     if cc_emails:
        message["Cc"] = ', '.join([email.strip() for email in cc_emails])
     message["Subject"] = subject
-    # Include reply headers if subject is a resposne
     if reply_info:
-       message["In-Reply-To"] = f"<{subject}>"
-       message["References"] = f"<{subject}>"
+       original_msg_id = extract_mail_id(subject)
+       if original_msg_id != None:
+          message["In-Reply-To"] = original_msg_id
+          message["References"] = original_msg_id
     message.attach(MIMEText(body, "html"))
+    # Add attachments if any
+    for attachment in attachments:
+        try:
+            attachment = attachment.strip()
+            with open(attachment, "rb") as attachment_file:
+                part = MIMEBase("application", "octet-stream")
+                part.set_payload(attachment_file.read())
+            encoders.encode_base64(part)
+            part.add_header(
+                "Content-Disposition",
+                f"attachment; filename= {os.path.basename(attachment)}",
+            )
+            message.attach(part)
+        except Exception as e:
+            print(f"Error attaching file {attachment}: {e}")
 
     # Combine all recipients for the sendmail function
     all_recipients = recipient_emails + cc_emails + bcc_emails
@@ -197,4 +274,4 @@ def send_email(subject, body, recipient_emails, cc_emails, bcc_emails, reply_inf
     print("Email sent successfully!")
 
 # Calling the send_email() function with AI response as the body
-send_email(subject=extract_subject(ai_response), body=extract_body(ai_response), recipient_emails=extract_recipient_mails(ai_response), cc_emails=extract_cc_mails(ai_response), bcc_emails=extract_bcc_mails(ai_response), reply_info=extract_reply_info(extract_subject(ai_response)))
+send_email(subject=extract_subject(ai_response), body=extract_body(ai_response), recipient_emails=extract_recipient_mails(ai_response), cc_emails=extract_cc_mails(ai_response), bcc_emails=extract_bcc_mails(ai_response), reply_info=extract_reply_info(extract_subject(ai_response)), attachments=extract_attachments(ai_response))
