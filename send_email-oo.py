@@ -7,13 +7,15 @@ import markdown2
 import google.generativeai as genai
 import time
 import os
+import sys
 import re
 from dotenv import load_dotenv, dotenv_values 
 import imaplib
 import email
 from email.header import decode_header
 from email import encoders
-
+from apscheduler.schedulers.background import BackgroundScheduler
+import datetime
 
 
 class App :
@@ -79,6 +81,23 @@ class App :
       if "None" in [attachment.strip() for attachment in attachments]:
           attachments = []
       return attachments
+    
+    #Function to determine the time where the mail will be sent
+    def extract_time(self, ai_response):
+      time_session = self.model.start_chat(
+          history=[]
+      )
+      send_time = time_session.send_message(f"Extract the time in which the mail will be sent. If it's written something like 'in 5 minutes', calculate it given the fact that now the time is {datetime.datetime.now()}. The result must be strictly follow this structure: (year, month, day, hour, minute, second). If one of these information is not provided, write 0. If ther's any information about the time to send, write the now time following the structure mentionned earlier. Do not include any additional text or code in your response. Here is the mail to analyze: \n{ai_response}").text
+      # Remove any leading/trailing spaces and parentheses
+      send_time = send_time.strip().strip('()')
+      # Split the response by comma and strip any extra spaces
+      time_values = [int(value.strip()) for value in send_time.split(',')]
+      scheduled_time = datetime.datetime(*time_values)
+        # Ensure the scheduled time is at least 7 seconds in the future
+      if scheduled_time <= datetime.datetime.now() + datetime.timedelta(seconds=7):
+            scheduled_time = datetime.datetime.now() + datetime.timedelta(seconds=7) 
+      return scheduled_time
+
     
     #Function to determine wether the mail to send is a reply mail or not
     def extract_reply_info(self, ai_response):
@@ -245,9 +264,18 @@ class App :
         print(ai_response)
         # Calling the send_email() function with AI response as the body
         self.send_email(subject=self.extract_subject(ai_response), body=self.extract_body(ai_response), recipient_emails=self.extract_recipient_mails(ai_response), cc_emails=self.extract_cc_mails(ai_response), bcc_emails=self.extract_bcc_mails(ai_response), reply_info=self.extract_reply_info(self.extract_subject(ai_response)), attachments=self.extract_attachments(ai_response))
-
-        
-
+    # Function to start the scheduler in a separate process
+    def start_scheduler(self, send_time=extract_time(sys.argv[2]), subject=extract_subject(sys.argv[2]), body=extract_body(sys.argv[2]), recipient_emails=extract_recipient_mails(sys.argv[2]), cc_emails=extract_cc_mails(sys.argv[2]), bcc_emails=extract_bcc_mails(sys.argv[2]), reply_info=extract_reply_info(sys.argv[2]), attachment_paths=extract_attachments(sys.argv[2])):    
+        scheduler = BackgroundScheduler()
+        scheduler.add_job(self.send_email, 'date', run_date=send_time, args=(self, subject, body, recipient_emails, cc_emails, bcc_emails, reply_info, attachment_paths))
+        print(f"Email scheduled for {send_time}")
+        scheduler.start()
+        # Keep the scheduler running
+        try:
+            while True:
+                time.sleep(2)
+        except (KeyboardInterrupt, SystemExit):
+            scheduler.shutdown()
         
 
 # Function to format text as markdown (if needed)
@@ -258,7 +286,7 @@ def to_markdown(text):
 
 if __name__ == '__main__' :
    app = App()
-   app.initiate_chat()
+   app.start_scheduler()
 
 
 
