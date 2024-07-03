@@ -80,6 +80,10 @@ def extract_attachments(ai_response, model):
 def extract_reply_info(ai_response):
    return bool(re.search('Re:', ai_response))
 
+#Function to determine wether the mail will be forwarded or not
+def extract_forward_info(ai_response):
+   return bool(re.search('Fwd:', ai_response))
+
 #Function to determine the time when the mail will be sent
 def extract_time(ai_response, model):
    time_session = model.start_chat(
@@ -141,11 +145,86 @@ def extract_mail_id(search_subject):
 
 
 # Function to send an email
-def send_email(subject, body, recipient_emails, cc_emails, bcc_emails, reply_info, attachments=[]):
+def send_email(ai_response, reply_info, forward_info, model):
     try: 
       # Sender email credentials
       sender_email = os.getenv("sender_mail")
       app_password = os.getenv("password")  # Use the 16-digit App Password
+
+      subject=extract_subject(ai_response, model)
+      recipient_emails=extract_recipient_mails(ai_response, model)
+      cc_emails=extract_cc_mails(ai_response, model)
+      bcc_emails=extract_bcc_mails(ai_response, model)
+
+      if not forward_info: #If the mail is not to forward: devide the mail using extract() functions
+        # Mail division
+        body=extract_body(ai_response, model)
+        attachments=extract_attachments(ai_response, model)
+      else: #If the mail is to forward: extract the original mail id, then all its components
+        # Loop to remove all occurrences of "Fwd: " at the beginning of the subject
+        while subject.strip().lower().startswith("fwd: "):
+                subject = subject.strip()[5:]  # Remove "Fwd: " from the start
+        subject.strip()
+        original_msg_id = extract_mail_id(subject)
+        if original_msg_id != None:
+           try: #fetch the mail to forward
+                # Establish connection to the email server
+                mail = imaplib.IMAP4_SSL('imap.gmail.com')
+                mail.login(os.getenv("sender_mail"), os.getenv("password"))
+                mail.select('inbox')
+
+                # Search for the email UID using the message-ID
+                result, data = mail.search(None, f'(HEADER Message-ID "{original_msg_id}")')
+                if result != 'OK':
+                    raise ValueError(f"Failed to find email with message-ID {original_msg_id}")
+
+                # Find the email content using the UID
+                email_ids = data[0].split()
+                if not email_ids:
+                    raise ValueError(f"No email found with message-ID {original_msg_id}")
+
+                # Fetch the email
+                result, data = mail.fetch(email_ids[0], '(RFC822)')
+                raw_email = data[0][1]
+
+                # Parse the email content
+                msg = email.message_from_bytes(raw_email)
+                mail.logout()
+           except Exception as e:
+                print(f"Failed to fetch email: {e}")
+                return None
+           if msg is None:
+              return 
+           # Extract the body and attachments from the original email
+           original_body = ""
+           attachments = []
+           if msg.is_multipart():
+                for part in msg.walk():
+                    content_type = part.get_content_type()
+                    content_disposition = str(part.get("Content-Disposition"))
+
+                    if "attachment" in content_disposition:
+                        filename = part.get_filename()
+                        attachments.append(filename)
+                        with open(filename, "wb") as f:
+                            f.write(part.get_payload(decode=True))
+                    elif content_type == "text/plain" or content_type == "text/html":
+                        original_body += part.get_payload(decode=True).decode()
+           else:
+                original_body = msg.get_payload(decode=True).decode()
+          # Format the forwarded email body
+           original_from = msg["From"]
+           original_date = msg["Date"]
+           original_subject = msg["Subject"]
+           body = f"""---------- Forwarded message ---------\n
+            From: {original_from}\n
+            Date: {original_date}\n
+            Subject: {original_subject}\n
+           """
+           body += f"\n{original_body}"
+
+           # Print the mail to forwrad
+           print(f"To: {recipient_emails} \nCc: {cc_emails} \nBcc: {bcc_emails} \nSubject: Fwd: {subject} \nBody: \n{body} \nAttachments: {attachments}")
 
       #initializing the subject and body in case of None
       if subject.strip() == "None":
@@ -163,11 +242,11 @@ def send_email(subject, body, recipient_emails, cc_emails, bcc_emails, reply_inf
         cc_emails = []
       if "None" in [email.strip() for email in bcc_emails]:
         bcc_emails = []
-      
+        
       #Adding the signature in case there is not
       if os.getenv("signature") not in body:
-        body = body + '\n \n' + os.getenv("signature")
-      
+        body = body + '\n \n' + os.getenv("signature") if not forward_info else body+ '\n \n' + markdown2.markdown(to_markdown(f"**{os.getenv("signature")}**"))
+        
       #Formatting the body text as markdown
       body = to_markdown(body)
       # Convert Markdown to HTML
@@ -185,7 +264,7 @@ def send_email(subject, body, recipient_emails, cc_emails, bcc_emails, reply_inf
       message["To"] =  ', '.join([email.strip() for email in recipient_emails])
       if cc_emails:
         message["Cc"] = ', '.join([email.strip() for email in cc_emails])
-      message["Subject"] = subject
+      message["Subject"] = f"Fwd: {subject}" if forward_info else subject
       if reply_info:
         original_msg_id = extract_mail_id(subject)
         if original_msg_id != None:
@@ -223,6 +302,7 @@ def send_email(subject, body, recipient_emails, cc_emails, bcc_emails, reply_inf
           time.sleep(1.25)
       print('\n', end='')
       print("Email sent successfully!")
+     
     except Exception as e:
        print(f"failed to send email: {e}")
     finally:
@@ -231,9 +311,9 @@ def send_email(subject, body, recipient_emails, cc_emails, bcc_emails, reply_inf
        except SystemExit:
           pass # Prevent SystemExit from being logged by APScheduler
 # Function to start the scheduler in a separate process
-def start_scheduler(send_time, subject, body, recipient_emails, cc_emails, bcc_emails, reply_info, attachment_paths=[]):    
+def start_scheduler(send_time, ai_response, reply_info, forward_info, model):    
     scheduler = BackgroundScheduler()
-    scheduler.add_job(send_email, 'date', run_date=send_time, args=(subject, body, recipient_emails, cc_emails, bcc_emails, reply_info, attachment_paths))
+    scheduler.add_job(send_email, 'date', run_date=send_time, args=(ai_response, reply_info, forward_info, model))
     print(f"Email scheduled for {send_time}")
     scheduler.start()
     # Keep the scheduler running
@@ -291,6 +371,7 @@ def main():
     11- If there is no subject mentionned explicitly in the input, then the subject should be derived from the content of the body.
     12- If you can't derive a subject from the body of the email, or if the input specifies that the email should have no subject, indicate that there is no subject.
     13- If the provided subject in the input is a respond to another mail, write "Re: " followed by the subject.
+    14- If the provided mail will be forwarded, add "Fwd: " to the original subject and let other fields empty.
     """
     final_input=user_input+'. \n'+complementary_input
     response = chat_session.send_message(f"{final_input}")
@@ -299,17 +380,14 @@ def main():
     # Print the AI response (optional)
     print("\n\nAlright, here's my proposal. It will be delivered shortly:\n", flush=True)
     time.sleep(1.25)
-    print(ai_response)
     send_time=extract_time(ai_response, model)
     subject=extract_subject(ai_response, model)
-    body=extract_body(ai_response, model)
-    recipient_emails=extract_recipient_mails(ai_response, model)
-    cc_emails=extract_cc_mails(ai_response, model)
-    bcc_emails=extract_bcc_mails(ai_response, model)
     reply_info=extract_reply_info(subject)
-    attachments=extract_attachments(ai_response, model)
+    forward_info=extract_forward_info(subject)
+    if not forward_info:
+      print(ai_response)
     try:
-      start_scheduler(send_time, subject, body, recipient_emails, cc_emails, bcc_emails, reply_info, attachments)
+      start_scheduler(send_time, ai_response, reply_info, forward_info, model)
       print("main program finished")
       sys.exit(0)
     except Exception as e:
@@ -318,5 +396,36 @@ def main():
 if __name__ == '__main__':
 
   # loading variables from .env file
-  load_dotenv() 
+  load_dotenv()
   main()
+  """ai_response='''
+To: [recipient_mail(s)]
+Cc: [cc_mail(s)]
+Bcc: [bcc_mail(s)]
+Subject: Fwd: Provide feedback on MongoDB Atlas
+Body: [body]
+[signature]
+Attachments: path/to/file1.jpg, path/to/file2.txt
+Send time: today at 16:47
+'''
+# Configure the AI model with the API key
+  genai.configure(api_key=os.getenv("api_key"))
+
+  # AI generation configuration
+  generation_config = {
+      "temperature": 1,
+      "top_p": 0.95,
+      "top_k": 64,
+      "max_output_tokens": 8192,
+      "response_mime_type": "text/plain",
+  }
+    # Initialize the generative model
+  model = genai.GenerativeModel(
+      model_name="gemini-1.5-flash",
+      generation_config=generation_config,
+  )
+    # Start a chat session
+  chat_session = model.start_chat(
+      history=[]
+  )
+  send_email(ai_response, extract_reply_info(ai_response), extract_forward_info(ai_response), model)"""
