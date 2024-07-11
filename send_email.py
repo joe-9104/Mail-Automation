@@ -14,7 +14,6 @@ from email.header import decode_header
 from email import encoders
 from apscheduler.schedulers.background import BackgroundScheduler
 import datetime
-import multiprocessing
 
 # importing necessary functions from dotenv library
 from dotenv import load_dotenv, dotenv_values 
@@ -354,7 +353,7 @@ def main():
     To: [recipient_mail(s)]
     Cc: [cc_mail(s)]
     Bcc: [bcc_mail(s)]
-    Subject: [Subject of the mail]
+    Subject: [Subject of the mail] OR [Re: [Subject of the mail]] if the mail is a reply OR [Fwd: [Subject of the mail]] if the mail is to forward
     Body: [Body of the mail]
     {os.getenv("signature")} (instead of [Your Name]).
     Attachments: path/to/file1.txt, path/to/file2.jpg, ...
@@ -370,8 +369,6 @@ def main():
     10- If there is nothing to write in the body of the email, indicate that there is no body without warning the user.
     11- If there is no subject mentionned explicitly in the input, then the subject should be derived from the content of the body.
     12- If you can't derive a subject from the body of the email, or if the input specifies that the email should have no subject, indicate that there is no subject.
-    13- If the provided subject in the input is a respond to another mail, write "Re: " followed by the subject.
-    14- If the provided mail will be forwarded, add "Fwd: " to the original subject and let other fields empty.
     """
     final_input=user_input+'. \n'+complementary_input
     response = chat_session.send_message(f"{final_input}")
@@ -398,34 +395,3 @@ if __name__ == '__main__':
   # loading variables from .env file
   load_dotenv()
   main()
-  """ai_response='''
-To: [recipient_mail(s)]
-Cc: [cc_mail(s)]
-Bcc: [bcc_mail(s)]
-Subject: Fwd: Provide feedback on MongoDB Atlas
-Body: [body]
-[signature]
-Attachments: path/to/file1.jpg, path/to/file2.txt
-Send time: today at 16:47
-'''
-# Configure the AI model with the API key
-  genai.configure(api_key=os.getenv("api_key"))
-
-  # AI generation configuration
-  generation_config = {
-      "temperature": 1,
-      "top_p": 0.95,
-      "top_k": 64,
-      "max_output_tokens": 8192,
-      "response_mime_type": "text/plain",
-  }
-    # Initialize the generative model
-  model = genai.GenerativeModel(
-      model_name="gemini-1.5-flash",
-      generation_config=generation_config,
-  )
-    # Start a chat session
-  chat_session = model.start_chat(
-      history=[]
-  )
-  send_email(ai_response, extract_reply_info(ai_response), extract_forward_info(ai_response), model)"""
