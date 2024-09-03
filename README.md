@@ -1,4 +1,4 @@
-# AI Mail Automation Chatbot Outlook Add-in
+# AI Mail Automation Gizmo
 
 ## Overview
 
