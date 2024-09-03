@@ -2,7 +2,7 @@
 
 ## Overview
 
-The **AI Mail Automation Gizmo** is a powerful tool designed to automate email creation and management within Microsoft Outlook. This tool leverages advanced AI capabilities to generate, schedule, and send emails with minimal user input. It is particularly useful for automating repetitive email tasks, such as responding to common inquiries, forwarding emails, and scheduling future messages based on AI-generated content.
+The **AI Mail Automation Gizmo** is a powerful tool designed to automate email creation and management. This tool leverages advanced AI capabilities to generate, schedule, and send emails with minimal user input. It is particularly useful for automating repetitive email tasks, such as responding to common inquiries, forwarding emails, and scheduling future messages based on AI-generated content.
 
 ## Features
 
