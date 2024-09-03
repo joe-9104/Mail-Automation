@@ -49,5 +49,17 @@ The **AI Mail Automation Gizmo** is a powerful tool designed to automate email c
 
 ### Usage
 
-- Follow the on-screen prompts to generate and send emails using AI.
-- Choose between sending the email immediately or scheduling it for a future time.
+- You simply have to follow the on-screen prompt by writing your input, as if you were writing to any AI chatbot.
+  Example:
+  ```
+  Write to example1@domain.com and example2@domain.com to remind them about tomorrow's meeting. example3@domain.com should be in cc and example4@domain.com in bcc. Attach the following file to the mail: 'C:/path/to/the/file' and schedule this mail to be sent in 7 minutes
+  ```
+  And the tool will take care of the rest of the process.
+- You can also adapt your input to respond to a mail
+  ```
+  Respond to the mail which has 'Mail_Subject' as a subject to confirm that I will assist to the meeting
+  ```
+  or to forward a mail
+  ```
+  Forward the mail which has 'Mail_Subject' as a subject to example@domain.com
+  ```
